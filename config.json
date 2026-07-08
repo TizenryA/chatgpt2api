@@ -1,6 +1,6 @@
 {
   "auth-key": "chatgpt2api",
-  "refresh_account_interval_minute": 5,
+  "refresh_account_interval_minute": 60,
   "image_retention_days": 15,
   "image_poll_timeout_secs": 120,
   "auto_remove_rate_limited_accounts": false,
@@ -13,11 +13,11 @@
   ],
   "proxy": "",
   "proxy_runtime": {
-    "enabled": false,
+    "enabled": true,
     "egress_mode": "single_proxy",
     "proxy_url": "http://privoxy:8118",
     "resource_proxy_url": "",
-    "skip_ssl_verify": true,
+    "skip_ssl_verify": false,
     "reset_session_status_codes": [
       403
     ],
@@ -31,7 +31,7 @@
       "flaresolverr_url": "http://flaresolverr:8191",
       "timeout_sec": 60,
       "refresh_interval": 3600,
-      "warm_up_on_start": true
+      "warm_up_on_start": false
     }
   },
   "base_url": "",
@@ -96,11 +96,5 @@
   "image_check_before_hit_enabled": false,
   "image_settle_secs": 2,
   "auto_relogin_after_refresh": false,
-  "image_timeout_retry_secs": 30,
-  "third_party_apps": {
-    "infinite_canvas": {
-      "enabled": true,
-      "url": "https://canvas.best"
-    }
-  }
+  "image_timeout_retry_secs": 30
 }

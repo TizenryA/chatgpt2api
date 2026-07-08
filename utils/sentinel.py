@@ -100,8 +100,8 @@ def build_sentinel_token(
     *,
     user_agent: str = "",
     sec_ch_ua: str = "",
-) -> tuple[str, str]:
-    """请求 sentinel token 并返回 (sentinel_header_value, oai_sc_cookie_value)。
+) -> tuple[str, str, str]:
+    """请求 sentinel token 并返回 (sentinel_header_value, oai_sc_cookie_value, so_token_value)。
 
     Args:
         session: curl_cffi Session 实例
@@ -111,7 +111,10 @@ def build_sentinel_token(
         sec_ch_ua: 可选的 sec-ch-ua 覆盖
 
     Returns:
-        (openai-sentinel-token header value, oai-sc cookie value) 元组
+        (openai-sentinel-token header value, oai-sc cookie value, so-token value) 元组
+
+    SO token 来源在 Sentinel req 返回的 so 字段里（collector_dx / snapshot_dx），
+    通过 SentinelVM 执行字节码生成，和 turnstile.dx 的处理方式相同。
 
     Raises:
         RuntimeError: sentinel 请求失败
@@ -119,9 +122,10 @@ def build_sentinel_token(
     ua = user_agent or DEFAULT_SENTINEL_USER_AGENT
     ch_ua = sec_ch_ua or DEFAULT_SENTINEL_SEC_CH_UA
     generator = SentinelTokenGenerator(device_id, ua)
+    req_token = generator.generate_requirements_token()
     resp = session.post(
         "https://sentinel.openai.com/backend-api/sentinel/req",
-        data=json.dumps({"p": generator.generate_requirements_token(), "id": device_id, "flow": flow}),
+        data=json.dumps({"p": req_token, "id": device_id, "flow": flow}),
         headers={
             "Content-Type": "text/plain;charset=UTF-8",
             "Referer": "https://sentinel.openai.com/backend-api/sentinel/frame.html",
@@ -142,18 +146,51 @@ def build_sentinel_token(
             {"p": generator.generate_requirements_token(), "t": "", "c": "", "id": device_id, "flow": flow},
             separators=(",", ":"),
         )
-        return fallback, ""
+        return fallback, "", ""
 
     token = str(data.get("token") or "").strip()
     if resp.status_code != 200 or not token:
         raise RuntimeError(f"sentinel_req_failed_{resp.status_code}")
+
+    # Generate PoW token (p field)
     pow_data = data.get("proofofwork") or {}
     p_value = (
         generator.generate_token(str(pow_data.get("seed") or ""), str(pow_data.get("difficulty") or "0"))
         if pow_data.get("required") and pow_data.get("seed")
         else generator.generate_requirements_token()
     )
-    sentinel_value = json.dumps({"p": p_value, "t": "", "c": token, "id": device_id, "flow": flow}, separators=(",", ":"))
+
+    # Generate turnstile token (t field) via VM
+    t_value = ""
+    turnstile_data = data.get("turnstile") or {}
+    if turnstile_data.get("required") and turnstile_data.get("dx"):
+        try:
+            from utils.sentinel_vm import SentinelVM
+            vm = SentinelVM(ua, req_token)
+            t_value = vm.run(str(turnstile_data.get("dx")))
+        except Exception:
+            t_value = ""
+
+    # Generate SO token from so field (collector_dx + snapshot_dx) via VM
+    so_data = data.get("so") or {}
+    so_value = ""
+    if so_data.get("required"):
+        try:
+            from utils.sentinel_vm import SentinelVM
+            collector_dx = str(so_data.get("collector_dx") or "")
+            snapshot_dx = str(so_data.get("snapshot_dx") or "")
+            parts = []
+            if collector_dx:
+                vm1 = SentinelVM(ua, req_token)
+                parts.append(vm1.run(collector_dx))
+            if snapshot_dx:
+                vm2 = SentinelVM(ua, req_token)
+                parts.append(vm2.run(snapshot_dx))
+            so_value = ":".join(parts) if parts else ""
+        except Exception:
+            so_value = ""
+
+    sentinel_value = json.dumps({"p": p_value, "t": t_value, "c": token, "id": device_id, "flow": flow}, separators=(",", ":"))
     # oai-sc cookie = "0" + sentinel token "c" value (the challenge token from the server)
     oai_sc_value = "0" + token
-    return sentinel_value, oai_sc_value
+    return sentinel_value, oai_sc_value, so_value
